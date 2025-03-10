@@ -123,7 +123,27 @@ class FlowField {
         this.fieldSize = 30;  // Size of the flow field cube
         this.particleCount = 5000;
         this.particleSpeed = 0.1;
-        this.noiseScale = 0.1;  // Scale of the noise
+
+        // Enhanced 3D noise settings
+        this.noiseScale = {
+            x: 0.1,
+            y: 0.1,
+            z: 0.15  // Increased z-scale for more vertical variation
+        };
+
+        // Secondary noise for 3D complexity
+        this.secondaryNoiseScale = {
+            x: 0.2,
+            y: 0.2,
+            z: 0.25
+        };
+
+        this.noiseInfluence = {
+            primary: 0.7,
+            secondary: 0.3
+        };
+
+        this.zInfluence = 1.5;  // How much the z-dimension affects the flow
         this.timeScale = 0.0005;  // Speed of animation
         this.time = 0;
 
@@ -176,6 +196,10 @@ class FlowField {
 
     updateParticles() {
         const positions = this.particles.geometry.attributes.position.array;
+        const colors = this.particles.geometry.attributes.color.array;
+
+        // Additional time-varying offset
+        const timeOffset = this.time * 0.1;
 
         for (let i = 0; i < this.particleCount; i++) {
             const idx = i * 3;
@@ -183,23 +207,54 @@ class FlowField {
             let y = positions[idx + 1];
             let z = positions[idx + 2];
 
-            // Get flow field vector from noise
-            const angle1 = this.perlin.noise(
-                x * this.noiseScale,
-                y * this.noiseScale,
-                z * this.noiseScale + this.time
+            // Primary 3D noise field
+            const primaryNoise1 = this.perlin.noise(
+                x * this.noiseScale.x,
+                y * this.noiseScale.y,
+                z * this.noiseScale.z * this.zInfluence + this.time
+            );
+
+            const primaryNoise2 = this.perlin.noise(
+                x * this.noiseScale.x + 100,
+                y * this.noiseScale.y + 100,
+                z * this.noiseScale.z * this.zInfluence + 100 + this.time
+            );
+
+            // Secondary 3D noise field for complexity
+            const secondaryNoise1 = this.perlin.noise(
+                x * this.secondaryNoiseScale.x + 200,
+                y * this.secondaryNoiseScale.y + 200,
+                z * this.secondaryNoiseScale.z * this.zInfluence + 200 + timeOffset
+            );
+
+            const secondaryNoise2 = this.perlin.noise(
+                x * this.secondaryNoiseScale.x + 300,
+                y * this.secondaryNoiseScale.y + 300,
+                z * this.secondaryNoiseScale.z * this.zInfluence + 300 + timeOffset
+            );
+
+            // Blend the noise fields
+            const angle1 = (
+                primaryNoise1 * this.noiseInfluence.primary +
+                secondaryNoise1 * this.noiseInfluence.secondary
             ) * Math.PI * 2;
 
-            const angle2 = this.perlin.noise(
-                x * this.noiseScale + 100,
-                y * this.noiseScale + 100,
-                z * this.noiseScale + this.time
+            const angle2 = (
+                primaryNoise2 * this.noiseInfluence.primary +
+                secondaryNoise2 * this.noiseInfluence.secondary
             ) * Math.PI;
 
-            // Convert spherical to cartesian coordinates for velocity
+            // Calculate a z-specific angle for more vertical flow variation
+            const zAngle = this.perlin.noise(
+                x * this.noiseScale.x + 400,
+                y * this.noiseScale.y + 400,
+                z * this.noiseScale.z + 400 + this.time
+            ) * Math.PI * 0.5; // Half PI for more subtle vertical shifts
+
+            // Convert spherical to cartesian coordinates with enhanced z influence
             const vx = Math.sin(angle1) * Math.cos(angle2);
             const vy = Math.sin(angle1) * Math.sin(angle2);
-            const vz = Math.cos(angle1);
+            const vz = Math.cos(angle1) + Math.sin(zAngle) * 0.5; // Add z-specific flow
 
             // Update position
             x += vx * this.particleSpeed;
@@ -234,9 +289,20 @@ class FlowField {
             positions[idx] = x;
             positions[idx + 1] = y;
             positions[idx + 2] = z;
+
+            // Update color based on Y position
+            // Map y from [-halfSize, halfSize] to a color gradient
+            const normalizedY = (y + halfSize) / this.fieldSize; // 0 to 1
+
+            // Color gradient based on Y position
+            // You can customize these color mappings as desired
+            colors[idx] = 0.5 + 0.5 * Math.sin(normalizedY * Math.PI * 2); // Red
+            colors[idx + 1] = normalizedY; // Green increases with height
+            colors[idx + 2] = 1.0 - normalizedY; // Blue decreases with height
         }
 
         this.particles.geometry.attributes.position.needsUpdate = true;
+        this.particles.geometry.attributes.color.needsUpdate = true; // Mark colors for update
 
         // Update time
         this.time += this.timeScale;
