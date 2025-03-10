@@ -1,12 +1,19 @@
 {
-  "name": "flowfield",
+  "name": "3d-flow-field",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "A creative coding project exploring flow field visualization",
+  "main": "main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "npx serve"
   },
-  "keywords": [],
+  "keywords": [
+    "flow-field",
+    "creative-coding",
+    "visualization",
+    "javascript",
+    "canvas"
+  ],
   "author": "",
-  "license": "ISC",
-  "description": ""
+  "license": "MIT"
 }
