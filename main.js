@@ -104,7 +104,8 @@ class FlowField {
         // Three.js setup
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.position.z = 50;
+        this.camera.position.set(40, 40, 40); // Position camera at an angle
+        this.camera.lookAt(0, 0, 0);
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -120,9 +121,21 @@ class FlowField {
         this.perlin = new PerlinNoise();
 
         // Flow field settings
-        this.fieldSize = 30;  // Size of the flow field cube
-        this.particleCount = 5000;
+        this.fieldSize = 60;  // Size of the flow field cube (doubled from 30)
+        this.particleCount = 20000;
         this.particleSpeed = 0.1;
+
+        // Particle repulsion settings
+        this.repulsionRadius = 0.5;  // Distance at which particles start repelling
+        this.repulsionForce = 0.02;  // Strength of repulsion
+        this.spatialHashCellSize = 1; // Size of spatial hash cells for optimization
+        this.spatialHash = new Map(); // Spatial hash for particle lookup
+
+        // Cylinder parameters
+        this.cylinderRadius = 15;  // Doubled from 10 to match larger field size
+        this.cylinderForce = 0.03;  // Increased force for stronger attraction
+        this.cylinderInfluenceRadius = 40; // Doubled from 20 to match larger field size
+        this.cylinderFalloff = 0.8;  // How quickly the force falls off with distance (0-1, lower = sharper falloff)
 
         // Enhanced 3D noise settings
         this.noiseScale = {
@@ -198,14 +211,94 @@ class FlowField {
         const positions = this.particles.geometry.attributes.position.array;
         const colors = this.particles.geometry.attributes.color.array;
 
+        // Clear spatial hash
+        this.spatialHash.clear();
+
+        // First pass: Build spatial hash
+        for (let i = 0; i < this.particleCount; i++) {
+            const idx = i * 3;
+            const x = positions[idx];
+            const y = positions[idx + 1];
+            const z = positions[idx + 2];
+
+            // Get cell coordinates
+            const cellX = Math.floor(x / this.spatialHashCellSize);
+            const cellY = Math.floor(y / this.spatialHashCellSize);
+            const cellZ = Math.floor(z / this.spatialHashCellSize);
+            const cellKey = `${cellX},${cellY},${cellZ}`;
+
+            // Add particle to spatial hash
+            if (!this.spatialHash.has(cellKey)) {
+                this.spatialHash.set(cellKey, []);
+            }
+            this.spatialHash.get(cellKey).push(i);
+        }
+
         // Additional time-varying offset
         const timeOffset = this.time * 0.1;
 
+        // Second pass: Update positions with repulsion
         for (let i = 0; i < this.particleCount; i++) {
             const idx = i * 3;
             let x = positions[idx];
             let y = positions[idx + 1];
             let z = positions[idx + 2];
+
+            // Calculate repulsion forces from nearby particles
+            let repulsionX = 0;
+            let repulsionY = 0;
+            let repulsionZ = 0;
+
+            // Get cell coordinates for current particle
+            const cellX = Math.floor(x / this.spatialHashCellSize);
+            const cellY = Math.floor(y / this.spatialHashCellSize);
+            const cellZ = Math.floor(z / this.spatialHashCellSize);
+
+            // Check neighboring cells
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dz = -1; dz <= 1; dz++) {
+                        const neighborKey = `${cellX + dx},${cellY + dy},${cellZ + dz}`;
+                        const neighborParticles = this.spatialHash.get(neighborKey);
+
+                        if (neighborParticles) {
+                            for (const j of neighborParticles) {
+                                if (i !== j) {
+                                    const jx = positions[j * 3];
+                                    const jy = positions[j * 3 + 1];
+                                    const jz = positions[j * 3 + 2];
+
+                                    const dx = x - jx;
+                                    const dy = y - jy;
+                                    const dz = z - jz;
+                                    const distSq = dx * dx + dy * dy + dz * dz;
+
+                                    if (distSq < this.repulsionRadius * this.repulsionRadius && distSq > 0) {
+                                        const dist = Math.sqrt(distSq);
+                                        const force = (1 - dist / this.repulsionRadius) * this.repulsionForce;
+                                        repulsionX += (dx / dist) * force;
+                                        repulsionY += (dy / dist) * force;
+                                        repulsionZ += (dz / dist) * force;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Calculate distance from central axis (x-axis now)
+            const distanceFromAxis = Math.sqrt(y * y + z * z);
+            const angle = Math.atan2(z, y);
+
+            // Calculate force towards cylinder surface with distance-based falloff
+            const radiusDiff = this.cylinderRadius - distanceFromAxis;
+            const distanceInfluence = Math.pow(
+                Math.max(0, 1 - (distanceFromAxis / this.cylinderInfluenceRadius)),
+                this.cylinderFalloff
+            );
+            const cylinderForceY = (radiusDiff * Math.cos(angle)) * this.cylinderForce * distanceInfluence;
+            const cylinderForceZ = (radiusDiff * Math.sin(angle)) * this.cylinderForce * distanceInfluence;
 
             // Primary 3D noise field
             const primaryNoise1 = this.perlin.noise(
@@ -249,17 +342,17 @@ class FlowField {
                 x * this.noiseScale.x + 400,
                 y * this.noiseScale.y + 400,
                 z * this.noiseScale.z + 400 + this.time
-            ) * Math.PI * 0.5; // Half PI for more subtle vertical shifts
+            ) * Math.PI * 0.5;
 
             // Convert spherical to cartesian coordinates with enhanced z influence
             const vx = Math.sin(angle1) * Math.cos(angle2);
             const vy = Math.sin(angle1) * Math.sin(angle2);
-            const vz = Math.cos(angle1) + Math.sin(zAngle) * 0.5; // Add z-specific flow
+            const vz = Math.cos(angle1) + Math.sin(zAngle) * 0.5;
 
-            // Update position
-            x += vx * this.particleSpeed;
-            y += vy * this.particleSpeed;
-            z += vz * this.particleSpeed;
+            // Update position with flow field, cylinder attraction, and repulsion
+            x += (vx * this.particleSpeed) + repulsionX;
+            y += (vy * this.particleSpeed) + cylinderForceY + repulsionY;
+            z += (vz * this.particleSpeed) + cylinderForceZ + repulsionZ;
 
             // Make particles wrap around when they hit the boundaries
             const halfSize = this.fieldSize / 2;
@@ -290,15 +383,31 @@ class FlowField {
             positions[idx + 1] = y;
             positions[idx + 2] = z;
 
-            // Update color based on Y position
-            // Map y from [-halfSize, halfSize] to a color gradient
-            const normalizedY = (y + halfSize) / this.fieldSize; // 0 to 1
+            // Update color based on distance from cylinder surface with smoother transition
+            const distFromCylinder = Math.abs(distanceFromAxis - this.cylinderRadius);
+            const normalizedDist = Math.min(distFromCylinder / (this.cylinderRadius * 0.8), 1);
 
-            // Color gradient based on Y position
-            // You can customize these color mappings as desired
-            colors[idx] = 0.5 + 0.5 * Math.sin(normalizedY * Math.PI * 2); // Red
-            colors[idx + 1] = normalizedY; // Green increases with height
-            colors[idx + 2] = 1.0 - normalizedY; // Blue decreases with height
+            // Blend between two color schemes based on cylinder influence
+            const cylinderInfluence = Math.max(0, 1 - (distFromCylinder / (this.cylinderRadius * 1.5)));
+
+            // Colors for particles near cylinder
+            const nearColors = {
+                r: 0.7 + 0.3 * Math.sin(this.time * 2 + x * 0.1),
+                g: 0.5 + 0.3 * Math.sin(this.time * 3 + x * 0.1),
+                b: 0.9
+            };
+
+            // Colors for particles away from cylinder
+            const farColors = {
+                r: 0.3 + 0.2 * Math.sin(normalizedDist * Math.PI * 2),
+                g: 0.5 - normalizedDist * 0.3,
+                b: 0.6
+            };
+
+            // Blend colors based on cylinder influence
+            colors[idx] = nearColors.r * cylinderInfluence + farColors.r * (1 - cylinderInfluence);
+            colors[idx + 1] = nearColors.g * cylinderInfluence + farColors.g * (1 - cylinderInfluence);
+            colors[idx + 2] = nearColors.b * cylinderInfluence + farColors.b * (1 - cylinderInfluence);
         }
 
         this.particles.geometry.attributes.position.needsUpdate = true;
